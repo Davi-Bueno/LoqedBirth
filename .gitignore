@@ -1,0 +1,45 @@
+# Arquivos do ambiente virtual
+venv/
+
+# Arquivos do sistema operacional
+*.log
+*.DS_Store
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+
+# Configurações do IDE (PyCharm, VSCode, etc.)
+.vscode/
+.idea/
+*.iml
+
+# Dependências e pacotes
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Arquivos de cache e logs
+*.bak
+*.swp
+*.swo
+*.tmp
+*.~tmp~
+
+# Arquivos grandes e bibliotecas específicas
+*.dll
+*.lib
+
+# Arquivos de configuração pessoal
+.env
+*.env
+
+# Arquivos gerados automaticamente
+*.db
+*.sqlite3
+*.sqlite
+*.log
+*.bak
+*.zip
