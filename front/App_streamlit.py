@@ -1,77 +1,90 @@
 import streamlit as st
 import requests
-from PIL import Image
 import os
 from datetime import datetime
 import pytz
-from langchain.llms import LlamaCpp
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
-import json
+import re
+import socket
 
-# Definir URL da API Flask
-API_URL = "http://localhost:5000"
 
-st.title("Interface para CRUD de Usuários")
+local_ip = socket.gethostbyname(socket.gethostname())
 
-# Criar aba de navegação
-aba = st.sidebar.radio("Menu", ["Listar Usuários", "Cadastrar Usuário", "Ver Imagens do Banco", "Oráculo"])
+# 🔹 Definir URL da API Flask
+API_URL = f"http://{local_ip}:8080" if local_ip != "127.0.0.1" else "http://localhost:8080"
+
+# 🔐 SECRET_KEY para acesso básico
+SECRET_KEY = "DaviKey"
+
+# 🔹 Função para exibir alerta inicial
+def validar_acesso():
+    """Valida se o usuário tem a chave secreta correta."""
+    if 'autenticado' not in st.session_state:
+        st.session_state.autenticado = False  # Inicializa como não autenticado
+
+    if not st.session_state.autenticado:
+        chave_digitada = st.text_input("🔐 Digite a chave de acesso para continuar:", type="password")
+        if st.button("Entrar"):
+            if chave_digitada == SECRET_KEY:
+                st.session_state.autenticado = True
+                st.success("✅ Acesso permitido! Bem-vindo ao sistema.")
+                st.rerun()
+            else:
+                st.error("❌ Chave de acesso incorreta. Tente novamente.")
+        st.stop()
+
+# 🔹 Validar acesso antes de qualquer coisa
+validar_acesso()
+
+st.title("📌 Painel de Gerenciamento de Usuários")
+
+# Criar menu lateral
+aba = st.sidebar.radio("Menu", ["Listar Usuários", "Cadastrar Usuário", "Oráculo"])
 
 # Criar pasta para armazenar imagens temporárias
 if not os.path.exists("temp_images"):
     os.makedirs("temp_images")
 
-# Função para formatar data
-def formatar_data(data_str):
+# 🔹 Função para validar nome
+def validar_nome(nome):
+    """Verifica se o nome contém apenas letras e espaços"""
+    return re.match(r"^[a-zA-ZÀ-ÿ\s]+$", nome) is not None
+
+# 🔹 Função para validar data de nascimento
+def validar_data_nascimento(data_nascimento):
+    """Verifica se a data de nascimento é coerente"""
     try:
-        # Converte a string para um objeto datetime (UTC)
-        data_obj = datetime.strptime(data_str, "%Y-%m-%dT%H:%M:%S.%fZ")
-        
-        # Define o fuso horário UTC
-        utc = pytz.UTC
-        data_obj = utc.localize(data_obj)
-        
-        # Converte para o fuso horário de São Paulo
-        fuso_sp = pytz.timezone('America/Sao_Paulo')
-        data_local = data_obj.astimezone(fuso_sp)
-        
-        # Retorna no formato brasileiro (dd/mm/yyyy HH:mm:ss)
-        return data_local.strftime("%d/%m/%Y %H:%M:%S")
-    except Exception as e:
-        print(f"Erro ao formatar data: {str(e)}")  # Log para debug
-        return "Data inválida"
+        data_nasc = datetime.strptime(str(data_nascimento), "%Y-%m-%d")
+        data_atual = datetime.now()
 
-# Configuração do modelo Llama
-@st.cache_resource
-def load_llm():
-    llm = LlamaCpp(
-        model_path="models/llama-2-7b-chat.gguf",  # Ajuste o caminho do seu modelo
-        temperature=0.1,
-        max_tokens=2000,
-        top_p=1,
-        verbose=True,
-        n_ctx=2048
-    )
-    return llm
+        if data_nasc >= data_atual:
+            return False
+        if data_nasc.year < 1900:  # Evita datas muito antigas
+            return False
+        return True
+    except ValueError:
+        return False
 
-# Template para análise de dados
-ANALYSIS_TEMPLATE = """
-Você é um assistente especializado em análise de dados de usuários.
-Analise os dados fornecidos e responda à pergunta do usuário.
+# 🔹 Função para verificar se o nome já existe
+def verificar_nome_existente(nome, id_atual=None):
+    """
+    Verifica se o nome já existe no banco de dados.
+    Se 'id_atual' for fornecido, ele ignora o próprio usuário na verificação.
+    """
+    response = requests.get(f"{API_URL}/get_users")
+    if response.status_code == 200:
+        users = response.json()
+        for user in users:
+            # Ignorar o próprio usuário durante a verificação
+            if user['nome'].strip().lower() == nome.strip().lower() and user['id'] != id_atual:
+                return True  # Nome duplicado encontrado
+    return False
 
-Dados dos usuários:
-{users_data}
 
-Pergunta do usuário:
-{question}
 
-Forneça uma resposta clara e concisa baseada apenas nos dados fornecidos.
-Se não for possível responder com os dados disponíveis, explique educadamente.
 
-Resposta:"""
-
+# 🔹 Listar Usuários
 if aba == "Listar Usuários":
-    st.header("Lista de Usuários")
+    st.header("📋 Lista de Usuários")
 
     response = requests.get(f"{API_URL}/get_users")
 
@@ -80,37 +93,25 @@ if aba == "Listar Usuários":
         for user in users:
             with st.expander(f"👤 {user['nome']}", expanded=True):
                 col1, col2 = st.columns([2, 1])
-                
+
                 with col1:
-                    # Informações do usuário
                     st.write(f"📅 Data de Nascimento: {user['data_nascimento']}")
-                    
-                    # Formatando a data de criação e atualização
-                    created_at = formatar_data(user["created_at"]["$date"]) if isinstance(user["created_at"], dict) else user["created_at"]
-                    updated_at = formatar_data(user["updated_at"]["$date"]) if isinstance(user["updated_at"], dict) else user["updated_at"]
-                    
+                    created_at = (user["created_at"])
+                    updated_at = (user["updated_at"])
                     st.write(f"🕒 Criado em: {created_at}")
                     st.write(f"🕒 Atualizado em: {updated_at}")
 
-                    # Baixar a imagem do GridFS
                     if 'image_id' in user:
-                        try:
-                            download_response = requests.get(
-                                f"{API_URL}/download_image/{user['image_id']}", 
-                                headers={'Accept': 'image/*'}
-                            )
-                            
-                            if download_response.status_code == 200:
-                                st.image(download_response.content, width=150)
-                            else:
-                                st.error(f"Erro ao baixar a imagem: {download_response.status_code}")
-                        except Exception as e:
-                            st.error(f"Erro ao exibir a imagem: {str(e)}")
-                    else:
-                        st.warning("Usuário não possui imagem")
+                        # Requisição à nova rota que gera URLs temporárias seguras
+                        response = requests.get(f"{API_URL}/get_secure_image/{user['image_id']}")
+
+                        if response.status_code == 200:
+                            secure_url = response.json().get("secure_url", "")
+                            st.image(secure_url, width=300, use_container_width=True)
+                        else:
+                            st.warning("🚫 Imagem não encontrada.")
 
                 with col2:
-                    # Botões de ação
                     if st.button("✏️ Editar", key=f"edit_{user['id']}"):
                         st.session_state.editing_user = user['id']
                         st.session_state.editing_name = user['nome']
@@ -121,177 +122,114 @@ if aba == "Listar Usuários":
                             st.success(f"Usuário {user['nome']} deletado com sucesso!")
                             st.rerun()
                         else:
-                            st.error(f"Erro ao deletar o usuário {user['nome']}")
+                            st.error(f"Erro ao deletar {user['nome']}.")
 
-                # Formulário de edição (aparece quando o botão Editar é clicado)
+                # 🔹 Edição de Usuário
                 if hasattr(st.session_state, 'editing_user') and st.session_state.editing_user == user['id']:
                     st.markdown("### ✏️ Editar Usuário")
-                    
                     novo_nome = st.text_input("Nome", value=st.session_state.editing_name)
-                    nova_data = st.date_input("Data de Nascimento", 
-                                            value=datetime.strptime(st.session_state.editing_birth, "%Y-%m-%d").date())
-                    nova_imagem = st.file_uploader("Nova Imagem (opcional)", 
-                                                 type=["jpg", "png", "jpeg"], 
-                                                 key=f"image_{user['id']}")
+                    # 🔹 Garante que a string tem apenas a data, sem horas
+                    data_nascimento_str = st.session_state.editing_birth.split(" ")[0]  # Remove a parte da hora, se existir
+
+                    # 🔹 Converte para objeto datetime corretamente
+                    nova_data = st.date_input("Data de Nascimento", value=datetime.strptime(data_nascimento_str, "%d/%m/%Y").date())
+                    nova_imagem = st.file_uploader("Nova Imagem (opcional)", type=["jpg", "png", "jpeg"], key=f"image_{user['id']}")
 
                     col3, col4 = st.columns([1, 2])
                     with col3:
-                        if st.button("💾 Salvar", key=f"save_{user['id']}"):
-                            files = {"imagem": nova_imagem} if nova_imagem else None
-                            data = {
-                                "nome": novo_nome,
-                                "data_nascimento": str(nova_data)
-                            }
-                            
-                            response = requests.put(
-                                f"{API_URL}/update_user/{user['id']}", 
-                                files=files, 
-                                data=data
-                            )
-
-                            if response.status_code == 200:
-                                st.success("Usuário atualizado com sucesso!")
-                                del st.session_state.editing_user
-                                st.rerun()
+                         if st.button("💾 Salvar", key=f"save_{user['id']}"):
+                            # 🔹 Validação antes de enviar ao backend
+                            if not validar_nome(novo_nome):
+                                st.error("❌ Nome inválido! Use apenas letras e espaços.")
+                            elif verificar_nome_existente(novo_nome, id_atual=user['id']):
+                                st.error("❌ Nome já cadastrado!")
+                            elif not validar_data_nascimento(nova_data):
+                                st.error("❌ Data de nascimento inválida! Escolha uma data coerente.")
                             else:
-                                st.error("Erro ao atualizar usuário.")
-                    
+                                # 🔹 Atualizar usuário
+                                files = {"imagem": nova_imagem} if nova_imagem else None
+                                data = {"nome": novo_nome, "data_nascimento": str(nova_data)}
+                                response = requests.put(f"{API_URL}/update_user/{user['id']}", files=files, data=data)
+
+                                if response.status_code == 200:
+                                    st.success("✅ Usuário atualizado com sucesso!")
+                                    del st.session_state.editing_user
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Erro ao atualizar usuário.")
+
+
+
                     with col4:
                         if st.button("❌ Cancelar", key=f"cancel_{user['id']}"):
                             del st.session_state.editing_user
                             st.rerun()
 
-            st.markdown("---")  # Separador entre usuários
+            st.markdown("---")
     else:
-        st.error("Erro ao buscar usuários do banco de dados")
+        st.error("Erro ao buscar usuários do banco.")
 
+# 🔹 Cadastrar Usuário
 elif aba == "Cadastrar Usuário":
-    st.header("Cadastro de Usuário")
-           
+    st.header("➕ Cadastrar Usuário")
+
     nome = st.text_input("Nome")
     data_nascimento = st.date_input("Data de Nascimento")
     imagem = st.file_uploader("Selecione uma imagem", type=["jpg", "png", "jpeg"])
 
     if st.button("Cadastrar"):
-        if nome and data_nascimento and imagem:
+        # 🔸 Validações 🔸
+        if not nome:
+            st.error("❌ Nome é obrigatório!")
+        elif not validar_nome(nome):
+            st.error("❌ Nome inválido! Use apenas letras e espaços.")
+        elif verificar_nome_existente(nome):
+            st.error("❌ Nome já cadastrado!")
+        elif not validar_data_nascimento(data_nascimento):
+            st.error("❌ Data de nascimento inválida! Escolha uma data coerente.")
+        elif not imagem:
+            st.error("❌ É obrigatório anexar uma imagem.")
+        else:
+            # 🔹 Cadastro no backend
             files = {"imagem": imagem}
             data = {"nome": nome, "data_nascimento": str(data_nascimento)}
+
             response = requests.post(f"{API_URL}/add_user", files=files, data=data)
 
             if response.status_code == 201:
-                st.success("Usuário cadastrado com sucesso!")
+                st.success("✅ Usuário cadastrado com sucesso!")
             else:
-                st.error("Erro ao cadastrar usuário.")
-        else:
-            st.error("Preencha todos os campos!")
+                st.error(f"❌ Erro ao cadastrar usuário: {response.json().get('erro', 'Erro desconhecido')}")
 
-# Adicionar a nova seção para ver imagens do banco
-elif aba == "Ver Imagens do Banco":
-    st.header("Imagens Armazenadas no Banco")
-    
-    # Buscar todos os usuários para obter os IDs das imagens
-    response = requests.get(f"{API_URL}/get_users")
-    
-    if response.status_code == 200:
-        users = response.json()
-        
-        for user in users:
-            st.write(f"👤 Nome: {user['nome']}")
-            st.write(f"📅 Data de Nascimento: {user['data_nascimento']}")
-            
-            if 'image_id' in user:
-                try:
-                    # Versão alternativa usando download_image
-                    download_response = requests.get(
-                        f"{API_URL}/download_image/{user['image_id']}", 
-                        headers={'Accept': 'image/*'}  # Indica que esperamos uma imagem
-                    )
-                    
-                    if download_response.status_code == 200:
-                        # Exibir a imagem diretamente dos bytes recebidos
-                        st.image(download_response.content, width=150)
-                        st.write(f"📝 Nome do arquivo: {user['imagem']}")
-                        st.write(f"🔍 ID no GridFS: {user['image_id']}")
-                    else:
-                        st.error(f"Erro ao baixar a imagem: {download_response.status_code}")
-                        st.write(f"Resposta do servidor: {download_response.text}")
-                except Exception as e:
-                    st.error(f"Erro ao processar a imagem: {str(e)}")
-                    print(f"[ERRO] Detalhes: {str(e)}")  # Log para debug
-            else:
-                st.warning("Usuário não possui imagem no banco")
-            
-            st.markdown("---")  # Separador entre usuários
-    else:
-        st.error("Erro ao buscar usuários do banco de dados")
 
+
+# 🔹 Oráculo
 elif aba == "Oráculo":
-    st.header("🔮 Oráculo - Consulta Inteligente")
-    st.write("Faça perguntas sobre os dados dos usuários cadastrados")
-    
-    try:
-        llm = load_llm()
-        prompt = PromptTemplate(
-            template=ANALYSIS_TEMPLATE,
-            input_variables=["users_data", "question"]
-        )
-        chain = LLMChain(llm=llm, prompt=prompt)
-    except Exception as e:
-        st.error(f"Erro ao carregar o modelo de IA: {str(e)}")
-        st.stop()
-    
-    response = requests.get(f"{API_URL}/get_users")
-    
-    if response.status_code == 200:
-        users_data = response.json()
-        
-        # Mostrar estatísticas básicas
-        with st.expander("📊 Estatísticas Gerais", expanded=True):
-            st.write(f"Total de usuários: {len(users_data)}")
-            st.write(f"Última atualização: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # Campo para pergunta
-        user_question = st.text_input(
-            "💭 Faça sua pergunta ao oráculo:",
-            placeholder="Ex: Qual o usuário mais antigo? Quantos usuários nasceram em 2000?"
-        )
-        
-        if st.button("🔮 Consultar"):
-            if user_question:
-                with st.spinner("Analisando dados..."):
-                    try:
-                        # Preparar dados para a IA
-                        formatted_data = json.dumps(users_data, indent=2, ensure_ascii=False)
-                        
-                        # Obter resposta da IA
-                        response = chain.run({
-                            "users_data": formatted_data,
-                            "question": user_question
-                        })
-                        
-                        # Mostrar resposta
-                        st.success(response)
-                        
-                        # Mostrar dados analisados
-                        with st.expander("🔍 Dados analisados"):
-                            st.json(users_data)
-                    
-                    except Exception as e:
-                        st.error(f"Erro na análise: {str(e)}")
-            else:
-                st.warning("Por favor, faça uma pergunta!")
-    
-    else:
-        st.error("Não foi possível conectar ao banco de dados. Tente novamente mais tarde.")
-    
-    # Dicas de uso
-    with st.expander("💡 Dicas de perguntas"):
-        st.markdown("""
-        Você pode perguntar sobre:
-        - Informações sobre usuários específicos
-        - Estatísticas sobre datas de nascimento
-        - Padrões nos dados de cadastro
-        - Análises temporais
-        - Comparações entre usuários
-        - E muito mais! A IA tentará responder qualquer pergunta sobre os dados disponíveis
-        """)
+    st.header("🔮 Oráculo - Inteligência de Dados")
+    st.write("Faça perguntas sobre os usuários cadastrados!")
+
+    user_question = st.text_input(
+        "💭 Pergunte ao Oráculo:",
+        placeholder="Exemplo: Qual é o usuário mais jovem?"
+    )
+
+    if st.button("🔍 Consultar"):
+        if user_question:
+            with st.spinner("Consultando..."):
+                response = requests.post(f"{API_URL}/oracle", json={"question": user_question})
+
+                if response.status_code == 200:
+                    data = response.json()
+                    resposta = data.get("resposta", "Erro ao obter resposta.")
+                    dados_utilizados = data.get("dados_utilizados", [])
+
+                    # Exibir resposta principal
+                    st.success(resposta)
+
+                    # Exibir JSON dos dados utilizados logo abaixo
+                    with st.expander("📂 Dados utilizados para análise"):
+                        st.json(dados_utilizados)
+                else:
+                    st.error("Erro ao consultar o Oráculo.")
+        else:
+            st.warning("Digite uma pergunta antes de consultar o Oráculo!")
